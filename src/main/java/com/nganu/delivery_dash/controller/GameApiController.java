@@ -1,7 +1,7 @@
 package com.nganu.delivery_dash.controller;
 
-import com.nganu.delivery_dash.dto.request.RfidAuthRequest;
-import com.nganu.delivery_dash.dto.response.AuthResponse;
+import com.nganu.delivery_dash.dto.request.SessionEndRequest;
+import com.nganu.delivery_dash.dto.response.ApiResponse;
 import com.nganu.delivery_dash.service.GameApiService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -10,20 +10,24 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/game")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*") // Mengizinkan akses dari domain luar (Unity, Vue, ESP32)
+@CrossOrigin(origins = "*") // CORS diizinkan untuk semua sumber (termasuk Unity)
 public class GameApiController {
 
     private final GameApiService gameApiService;
 
+    // ... (metode authRfid yang sudah ada)
+
     /**
-     * Endpoint untuk autentikasi RFID dari perangkat keras ESP32.
-     * URL: POST /api/game/auth
+     * Endpoint untuk menerima rekapitulasi data saat permainan di Unity selesai.
+     * URL: POST /api/game/session/{sessionId}/end
      */
-    @PostMapping("/auth")
-    public ResponseEntity<AuthResponse> authRfid(@RequestBody RfidAuthRequest request) {
-        // Mengirim request ke Service dan membungkus hasil kembaliannya ke dalam HTTP
-        // 200 (OK)
-        AuthResponse response = gameApiService.authenticateAndStartSession(request);
+    @PostMapping("/session/{sessionId}/end")
+    public ResponseEntity<ApiResponse> endSession(
+            @PathVariable Long sessionId,
+            @RequestBody SessionEndRequest request) {
+
+        // Memanggil service dan membungkus response dalam HTTP 200 OK
+        ApiResponse response = gameApiService.endSession(sessionId, request);
         return ResponseEntity.ok(response);
     }
 }
