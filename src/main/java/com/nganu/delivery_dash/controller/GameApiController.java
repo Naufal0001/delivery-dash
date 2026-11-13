@@ -1,5 +1,6 @@
 package com.nganu.delivery_dash.controller;
 
+import jakarta.validation.Valid;
 import com.nganu.delivery_dash.dto.request.RfidAuthRequest;
 import com.nganu.delivery_dash.dto.request.SessionEndRequest;
 import com.nganu.delivery_dash.dto.response.ApiResponse;
@@ -21,7 +22,8 @@ public class GameApiController {
     // 1. Endpoint Autentikasi RFID
     // POST http://localhost:8080/api/game/auth
     @PostMapping("/auth")
-    public ResponseEntity<AuthResponse> authRfid(@RequestBody RfidAuthRequest request) {
+    public ResponseEntity<AuthResponse> authRfid(
+            @Valid @RequestBody RfidAuthRequest request) { // Tambahkan @Valid
         AuthResponse response = gameApiService.authenticateAndStartSession(request);
         return ResponseEntity.ok(response);
     }
@@ -31,7 +33,7 @@ public class GameApiController {
     @PostMapping("/session/{sessionId}/end")
     public ResponseEntity<ApiResponse> endSession(
             @PathVariable Long sessionId,
-            @RequestBody SessionEndRequest request) {
+            @Valid @RequestBody SessionEndRequest request) { // Tambahkan @Valid
         ApiResponse response = gameApiService.endSession(sessionId, request);
         return ResponseEntity.ok(response);
     }
