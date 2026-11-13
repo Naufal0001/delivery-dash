@@ -1,7 +1,9 @@
 package com.nganu.delivery_dash.mqtt;
 
+import com.nganu.delivery_dash.service.TelemetryService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
@@ -18,15 +20,17 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * TEST KONEKTIVITAS SAJA: connect ke broker, subscribe, log pesan.
- * Belum parsing JSON, belum menyentuh database/user/session.
+ * Connect ke broker, subscribe, dan simpan telemetry ke DB lewat TelemetryService.
  * Matikan dengan  mqtt.enabled=false  di application.properties.
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class MqttTestListener implements MqttCallbackExtended {
 
     @Value("${mqtt.enabled:true}")
@@ -37,6 +41,12 @@ public class MqttTestListener implements MqttCallbackExtended {
     private String topicData;
     @Value("${mqtt.topic.status:itenas/d11/deliverydash/status}")
     private String topicStatus;
+
+    private final TelemetryService telemetryService;
+    // Tulis DB di thread sendiri: jangan memblok thread callback Paho. 1 thread -> urutan terjaga.
+    private final ExecutorService dbWorker = Executors.newSingleThreadExecutor();
+    private final AtomicLong savedCount = new AtomicLong();
+    private volatile String lastResult = "none yet";
 
     private volatile MqttAsyncClient client;
     private volatile boolean stopping = false;
@@ -97,6 +107,7 @@ public class MqttTestListener implements MqttCallbackExtended {
                 client.close();
             }
         } catch (MqttException ignored) { }
+        dbWorker.shutdown();
     }
 
     // Dipanggil saat connect pertama DAN tiap auto-reconnect. Subscribe async (tidak memblok thread callback).
@@ -126,7 +137,16 @@ public class MqttTestListener implements MqttCallbackExtended {
         lastPayload = text;
         lastMessageAt = Instant.now();
         long n = messageCount.incrementAndGet();
-        log.info("[mqtt] #{} {} -> {}", n, topic, text);   // 1 pesan/detik; turunkan ke debug setelah tes
+        log.debug("[mqtt] #{} {} -> {}", n, topic, text);
+
+        dbWorker.submit(() -> {
+            String result = telemetryService.handlePayload(text);
+            if ("saved".equals(result)) savedCount.incrementAndGet();
+            if (!result.equals(lastResult)) {          // log hanya saat hasil berubah, bukan tiap detik
+                log.info("[telemetry] {}", result);
+                lastResult = result;
+            }
+        });
     }
 
     @Override
@@ -142,6 +162,8 @@ public class MqttTestListener implements MqttCallbackExtended {
         m.put("messageCount", messageCount.get());
         m.put("lastMessageAt", lastMessageAt == null ? null : lastMessageAt.toString());
         m.put("lastPayload", lastPayload);
+        m.put("savedToDb", savedCount.get());
+        m.put("lastSaveResult", lastResult);       // saved / no active session / invalid: ... / error: ...
         return m;
     }
 }
