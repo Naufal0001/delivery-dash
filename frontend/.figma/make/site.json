@@ -1,0 +1,10 @@
+{
+  "description": "Helps cyclists monitor session status, heart rate, cadence, distance, scores, recent activity, and delivery mission progress in a responsive dashboard.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
