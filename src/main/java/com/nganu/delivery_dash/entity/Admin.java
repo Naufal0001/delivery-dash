@@ -16,14 +16,21 @@ public class Admin {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long adminId;
 
-    @Column(nullable = false, unique = true, length = 50)
-    private String username;
-
-    @Column(nullable = false)
-    private String password; // Akan menyimpan password yang sudah di-hash (BCrypt)
-
     @Column(nullable = false, length = 100)
     private String name;
+
+    @Column(nullable = false, unique = true, length = 100)
+    private String email;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(unique = true, length = 20)
+    private String rfidUid; // Opsional (boleh null jika admin hanya login manual)
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean isActive = true;
 
     @Column(nullable = false, updatable = false)
     @Builder.Default
