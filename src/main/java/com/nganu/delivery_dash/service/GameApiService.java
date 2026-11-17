@@ -112,7 +112,8 @@ public class GameApiService {
                 DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
 
                 List<String> labels = logs.stream()
-                                .map(log -> log.getRecordedAt().format(timeFormatter))
+                                .map(log -> log.getRecordedAt() != null ? log.getRecordedAt().format(timeFormatter)
+                                                : "-")
                                 .collect(Collectors.toList());
 
                 List<Integer> bpmData = logs.stream().map(SensorLog::getBpm).collect(Collectors.toList());
