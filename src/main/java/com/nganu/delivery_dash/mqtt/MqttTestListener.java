@@ -5,7 +5,9 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.paho.client.mqttv3.IMqttActionListener;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+import org.eclipse.paho.client.mqttv3.IMqttToken;
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -24,10 +26,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Connect ke broker, subscribe, dan simpan telemetry ke DB lewat TelemetryService.
- * Matikan dengan  mqtt.enabled=false  di application.properties.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -43,7 +41,6 @@ public class MqttTestListener implements MqttCallbackExtended {
     private String topicStatus;
 
     private final TelemetryService telemetryService;
-    // Tulis DB di thread sendiri: jangan memblok thread callback Paho. 1 thread -> urutan terjaga.
     private final ExecutorService dbWorker = Executors.newSingleThreadExecutor();
     private final AtomicLong savedCount = new AtomicLong();
     private volatile String lastResult = "none yet";
@@ -58,17 +55,19 @@ public class MqttTestListener implements MqttCallbackExtended {
 
     @PostConstruct
     public void start() {
+        topicData = topicData.trim();
+        topicStatus = topicStatus.trim();
+        broker = broker.trim();
+
         if (!enabled) {
             log.info("[mqtt] disabled (mqtt.enabled=false)");
             return;
         }
-        // Thread terpisah: aplikasi tetap start walau broker tidak terjangkau
         Thread t = new Thread(this::connectLoop, "mqtt-connect");
         t.setDaemon(true);
         t.start();
     }
 
-    // Paho hanya auto-reconnect SETELAH sekali berhasil connect, jadi percobaan awal di-retry manual
     private void connectLoop() {
         try {
             String clientId = "d11-backend-" + UUID.randomUUID().toString().substring(0, 8);
@@ -85,7 +84,7 @@ public class MqttTestListener implements MqttCallbackExtended {
                 try {
                     log.info("[mqtt] connecting to {} as {}", broker, clientId);
                     client.connect(opt).waitForCompletion(15000);
-                    return;   // subscribe dilakukan di connectComplete()
+                    return;
                 } catch (MqttException e) {
                     log.warn("[mqtt] connect failed: {} (retry in 5s)", e.getMessage());
                     Thread.sleep(5000);
@@ -103,21 +102,38 @@ public class MqttTestListener implements MqttCallbackExtended {
         stopping = true;
         try {
             if (client != null) {
-                if (client.isConnected()) client.disconnect().waitForCompletion(3000);
+                if (client.isConnected()) {
+                    client.disconnect().waitForCompletion(3000);
+                }
                 client.close();
             }
-        } catch (MqttException ignored) { }
+        } catch (MqttException ignored) {
+        }
         dbWorker.shutdown();
     }
 
-    // Dipanggil saat connect pertama DAN tiap auto-reconnect. Subscribe async (tidak memblok thread callback).
     @Override
     public void connectComplete(boolean reconnect, String serverURI) {
-        log.info("[mqtt] connected to {} (reconnect={})", serverURI, reconnect);
+        log.info("[mqtt] connected to {} (reconnect={}) | subscribing to data='{}', status='{}'",
+                serverURI, reconnect, topicData, topicStatus);
         try {
-            client.subscribe(new String[]{topicData, topicStatus}, new int[]{0, 1});
+            client.subscribe(
+                    new String[] { topicData, topicStatus },
+                    new int[] { 0, 1 },
+                    null,
+                    new IMqttActionListener() {
+                        @Override
+                        public void onSuccess(IMqttToken asyncActionToken) {
+                            log.info("[mqtt] subscribed OK -> '{}' & '{}'", topicData, topicStatus);
+                        }
+
+                        @Override
+                        public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                            log.error("[mqtt] subscribe failed: {}", exception.getMessage());
+                        }
+                    });
         } catch (MqttException e) {
-            log.error("[mqtt] subscribe failed: {}", e.getMessage());
+            log.error("[mqtt] subscribe exception: {}", e.getMessage());
         }
     }
 
@@ -137,12 +153,14 @@ public class MqttTestListener implements MqttCallbackExtended {
         lastPayload = text;
         lastMessageAt = Instant.now();
         long n = messageCount.incrementAndGet();
-        log.debug("[mqtt] #{} {} -> {}", n, topic, text);
+        log.info("[mqtt] #{} topic='{}' payload={}", n, topic, text);
 
         dbWorker.submit(() -> {
             String result = telemetryService.handlePayload(text);
-            if ("saved".equals(result)) savedCount.incrementAndGet();
-            if (!result.equals(lastResult)) {          // log hanya saat hasil berubah, bukan tiap detik
+            if ("saved".equals(result)) {
+                savedCount.incrementAndGet();
+            }
+            if (!result.equals(lastResult)) {
                 log.info("[telemetry] {}", result);
                 lastResult = result;
             }
@@ -150,20 +168,22 @@ public class MqttTestListener implements MqttCallbackExtended {
     }
 
     @Override
-    public void deliveryComplete(IMqttDeliveryToken token) { }
+    public void deliveryComplete(IMqttDeliveryToken token) {
+    }
 
-    /** Untuk endpoint cek status. */
     public Map<String, Object> snapshot() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("enabled", enabled);
         m.put("broker", broker);
         m.put("mqttConnected", client != null && client.isConnected());
-        m.put("masterStatus", masterStatus);          // online / offline / unknown
+        m.put("subscribedDataTopic", topicData);
+        m.put("subscribedStatusTopic", topicStatus);
+        m.put("masterStatus", masterStatus);
         m.put("messageCount", messageCount.get());
         m.put("lastMessageAt", lastMessageAt == null ? null : lastMessageAt.toString());
         m.put("lastPayload", lastPayload);
         m.put("savedToDb", savedCount.get());
-        m.put("lastSaveResult", lastResult);       // saved / no active session / invalid: ... / error: ...
+        m.put("lastSaveResult", lastResult);
         return m;
     }
 }

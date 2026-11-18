@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { PlaceholderPage } from './pages/PlaceholderPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { clearAuthUser, getSavedAuthUser } from './services/authService'
+import { startWorkoutSessionApi, stopWorkoutSessionApi } from './services/sessionService'
 import {
   createEmptyProfile,
   loadProfile,
@@ -35,6 +36,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => getSavedAuthUser())
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [activePage, setActivePage] = useState('Dashboard')
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null)
   const [workoutStartedAt, setWorkoutStartedAt] = useState<number | null>(null)
   const [workoutElapsedSeconds, setWorkoutElapsedSeconds] = useState(0)
   const [profile, setProfile] = useState<UserProfile>(() => {
@@ -72,6 +74,7 @@ export default function App() {
     setProfile(createEmptyProfile())
     setActivePage('Dashboard')
     setSidebarExpanded(false)
+    setActiveSessionId(null)
     setWorkoutStartedAt(null)
     setWorkoutElapsedSeconds(0)
     setSessions([])
@@ -83,40 +86,56 @@ export default function App() {
     setProfile(nextProfile)
   }
 
-  const toggleWorkout = () => {
+  const toggleWorkout = async () => {
     if (!authUser) return
+
     if (workoutStartedAt) {
       const durationSec =
         workoutElapsedSeconds + Math.floor((Date.now() - workoutStartedAt) / 1000)
+
+      let estimatedCalories: number | null = null
+      if (activeSessionId) {
+        try {
+          const result = await stopWorkoutSessionApi(activeSessionId, durationSec)
+          estimatedCalories = result.caloriesKcal
+        } catch (err) {
+          console.error('Gagal menutup sesi di server:', err)
+        }
+      }
+
       const completedSession: WorkoutSession = {
-        id: crypto.randomUUID(),
+        id: activeSessionId ? String(activeSessionId) : crypto.randomUUID(),
         startTime: new Date(workoutStartedAt).toISOString(),
         endTime: new Date().toISOString(),
         durationSec,
-        estimatedCalories: null,
+        estimatedCalories,
       }
       const nextSessions = [completedSession, ...sessions]
       setSessions(nextSessions)
       saveSessionsToStorage(authUser.email, nextSessions)
       setWorkoutElapsedSeconds(durationSec)
       setWorkoutStartedAt(null)
+      setActiveSessionId(null)
     } else {
-      setWorkoutElapsedSeconds(0)
-      setWorkoutStartedAt(Date.now())
+      try {
+        const res = await startWorkoutSessionApi(authUser.id)
+        setActiveSessionId(res.sessionId)
+        setWorkoutElapsedSeconds(0)
+        setWorkoutStartedAt(Date.now())
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Gagal terhubung ke server backend')
+      }
     }
   }
 
-  // 1. Belum Login -> Tampilkan Gerbang Autentikasi Satu Pintu
   if (!authUser) {
     return <AuthPage onLogin={handleLogin} />
   }
 
-  // 2. Role ADMIN -> Arahkan ke Workspace Admin
   if (authUser.role === 'ADMIN') {
     return <AdminDashboardPlaceholder admin={authUser} onLogout={handleLogout} />
   }
 
-  // 3. Role USER -> Tampilkan Dashboard Pengguna
   return (
     <div className="app-shell">
       <Sidebar
@@ -137,6 +156,7 @@ export default function App() {
         <main>
           {activePage === 'Dashboard' ? (
             <DashboardPage
+              activeSessionId={activeSessionId}
               latestSession={sessions[0] ?? null}
               onToggleWorkout={toggleWorkout}
               profile={profile}
