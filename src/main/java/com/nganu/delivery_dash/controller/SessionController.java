@@ -6,6 +6,7 @@ import com.nganu.delivery_dash.entity.User;
 import com.nganu.delivery_dash.repository.SensorLogRepository;
 import com.nganu.delivery_dash.repository.SessionRepository;
 import com.nganu.delivery_dash.repository.UserRepository;
+import com.nganu.delivery_dash.service.SessionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -25,18 +26,21 @@ public class SessionController {
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
     private final SensorLogRepository sensorLogRepository;
+    private final SessionService sessionService;
 
     public SessionController(
             SessionRepository sessionRepository,
             UserRepository userRepository,
-            SensorLogRepository sensorLogRepository) {
+            SensorLogRepository sensorLogRepository,
+            SessionService sessionService) {
         this.sessionRepository = sessionRepository;
         this.userRepository = userRepository;
         this.sensorLogRepository = sensorLogRepository;
+        this.sessionService = sessionService;
     }
 
+    // Tanpa @Transactional: kunci di SessionService harus dilepas SETELAH data commit
     @PostMapping("/start")
-    @Transactional
     public Map<String, Object> startSession(@RequestBody Map<String, Long> body) {
         Long userId = body.get("userId");
         if (userId == null) {
@@ -46,24 +50,15 @@ public class SessionController {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User tidak ditemukan"));
 
-        sessionRepository.findFirstByStatusOrderByStartTimeDesc("active").ifPresent(oldSession -> {
-            oldSession.setStatus("abandoned");
-            oldSession.setEndTime(LocalDateTime.now());
-            sessionRepository.save(oldSession);
-        });
-
-        Session newSession = Session.builder()
-                .user(user)
-                .status("active")
-                .startTime(LocalDateTime.now())
-                .build();
-
-        Session saved = sessionRepository.save(newSession);
+        // Satu pintu: tidak menimpa sesi user lain (409), melanjutkan sesi user yang sama
+        SessionService.StartResult result = sessionService.startSession(user, "WEB");
+        Session saved = result.session();
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("sessionId", saved.getSessionId());
         response.put("status", saved.getStatus());
         response.put("startTime", saved.getStartTime());
+        response.put("resumed", result.resumed());
         return response;
     }
 

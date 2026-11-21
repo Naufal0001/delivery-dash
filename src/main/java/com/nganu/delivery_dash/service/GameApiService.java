@@ -32,9 +32,10 @@ public class GameApiService {
         private final SessionRepository sessionRepository;
         private final DeliveryHistoryRepository deliveryHistoryRepository;
         private final SensorLogRepository sensorLogRepository;
+        private final SessionService sessionService;
 
         // --- TUGAS 1: AUTENTIKASI RFID ---
-        @Transactional
+        // Tanpa @Transactional: kunci di SessionService harus dilepas SETELAH data commit
         public AuthResponse authenticateAndStartSession(RfidAuthRequest request) {
                 User user = userRepository.findByRfidUid(request.getRfidUid())
                                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
@@ -44,20 +45,16 @@ public class GameApiService {
                         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Akun tidak aktif");
                 }
 
-                Session newSession = Session.builder()
-                                .user(user)
-                                .status("active")
-                                .weightKg(user.getWeightKg())
-                                .startTime(LocalDateTime.now())
-                                .build();
-
-                Session savedSession = sessionRepository.save(newSession);
+                // Satu pintu yang sama dengan login web: tidak menimpa sesi user lain (409)
+                SessionService.StartResult result = sessionService.startSession(user, "RFID");
+                Session savedSession = result.session();
 
                 return AuthResponse.builder()
                                 .userId(user.getUserId())
                                 .name(user.getName())
                                 .sessionId(savedSession.getSessionId())
-                                .message("Login berhasil, sesi permainan dimulai")
+                                .message(result.resumed() ? "Sesi sudah aktif, dilanjutkan"
+                                                : "Login berhasil, sesi permainan dimulai")
                                 .build();
         }
 
